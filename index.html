@@ -43,10 +43,23 @@ img{max-width:100%;}
    LAYOUT SHELL
    ==================================================== */
 #app{display:flex;flex-direction:column;height:100%;height:100dvh;max-width:960px;margin:0 auto;}
-#screen-area{flex:1;overflow:hidden;position:relative;}
-.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;display:none;flex-direction:column;padding:14px 14px 20px;gap:0;
-  scrollbar-width:thin;scrollbar-color:var(--border2) transparent;}
+#screen-area{flex:1;overflow:hidden;position:relative;min-height:0;}
+.screen{
+  position:absolute;inset:0;
+  overflow-y:scroll;overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
+  display:none;flex-direction:column;
+  padding:14px 14px 28px;
+  scrollbar-width:thin;scrollbar-color:var(--border2) transparent;
+}
+.screen::-webkit-scrollbar{width:4px;}
+.screen::-webkit-scrollbar-track{background:transparent;}
+.screen::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
 .screen.active{display:flex;animation:fadeIn .18s ease;}
+/* Settings uses block so all cards stack & scroll without flex quirks */
+#screen-settings{display:none;flex-direction:unset;flex:unset;}
+#screen-settings.active{display:block;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 
 /* ====================================================
@@ -299,9 +312,8 @@ img{max-width:100%;}
 .ap-sw.active,.ap-sw:hover{border-color:var(--text);transform:scale(1.2);}
 .stor-bar{height:5px;background:var(--border2);border-radius:3px;overflow:hidden;margin-top:6px;}
 .stor-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .5s;}
-.pwa-btn{display:none;width:100%;padding:11px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:var(--r);color:var(--accent);font-size:11px;font-weight:700;letter-spacing:.06em;cursor:pointer;transition:all .2s;margin-bottom:10px;}
+.pwa-btn{width:100%;padding:12px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:var(--r);color:var(--accent);font-size:11.5px;font-weight:700;letter-spacing:.06em;cursor:pointer;transition:all .2s;margin-bottom:10px;display:block;}
 .pwa-btn:hover{background:var(--accent);color:#0c0b09;}
-.pwa-btn.vis{display:block;}
 
 /* ====================================================
    PROGRESS + LOADING
@@ -1537,8 +1549,7 @@ async function refreshSettings(){
     document.getElementById('stor-info').textContent=`${all.length} image(s) · ~${fmtBytes(total)}`;
     document.getElementById('stor-fill').style.width=Math.min(100,(total/(50*1024*1024))*100)+'%';
   }catch(e){}
-  const installed=window.matchMedia('(display-mode: standalone)').matches;
-  document.getElementById('pwa-status').textContent=installed?'✅ Installed as app':'🌐 Running in browser';
+  checkPWAStatus();
 }
 async function exportAll(){ try{ const all=await dbGetAll(); if(!all.length){toast('No images');return;} all.forEach((r,i)=>{ const a=document.createElement('a'); a.href=r.dataUrl; a.download=r.name||`imago-backup-${i+1}.jpg`; a.click(); }); toast(`⬇ Downloading ${all.length} images`); }catch(e){toast('Export failed');} }
 async function clearLib(){ if(!confirm('Delete all stored images? Cannot be undone.'))return; await dbClear(); S.img=null; S.exportImg=null; refreshHome(); toast('🗑 Library cleared'); }
@@ -1546,9 +1557,52 @@ async function clearLib(){ if(!confirm('Delete all stored images? Cannot be undo
 /* ====================================================
    PWA
    ==================================================== */
-let deferredInstall=null;
-window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); deferredInstall=e; document.getElementById('pwa-btn').classList.add('vis'); });
-function installPWA(){ if(!deferredInstall){toast('Already installed or not supported');return;} deferredInstall.prompt(); deferredInstall.userChoice.then(r=>{ if(r.outcome==='accepted'){toast('✅ Imago installed!');deferredInstall=null;} }); }
+let deferredInstall = null;
+
+// Show install button immediately if not already installed
+function checkPWAStatus() {
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true
+    || document.referrer.includes('android-app://');
+  const btn = document.getElementById('pwa-btn');
+  const statusEl = document.getElementById('pwa-status');
+  if (isStandalone) {
+    if (btn) btn.style.display = 'none';
+    if (statusEl) statusEl.textContent = '✅ Installed as app';
+  } else {
+    // Always show button in browser — user can manually install via Chrome menu too
+    if (btn) btn.style.display = 'block';
+    if (statusEl) statusEl.textContent = '🌐 Running in browser — install available';
+  }
+}
+
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredInstall = e;
+  const btn = document.getElementById('pwa-btn');
+  if (btn) { btn.style.display = 'block'; btn.textContent = '📲 Install Imago as App (Tap Here)'; }
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstall = null;
+  const btn = document.getElementById('pwa-btn');
+  if (btn) btn.style.display = 'none';
+  document.getElementById('pwa-status').textContent = '✅ Installed as app';
+  toast('✅ Imago installed successfully!');
+});
+
+function installPWA() {
+  if (deferredInstall) {
+    deferredInstall.prompt();
+    deferredInstall.userChoice.then(r => {
+      if (r.outcome === 'accepted') { toast('✅ Imago installed!'); deferredInstall = null; }
+      else { toast('Install dismissed. Use Chrome menu → Add to Home screen.'); }
+    });
+  } else {
+    // Fallback instructions for Android Chrome manual install
+    toast('Open Chrome menu (⋮) → "Add to Home screen" to install', 4000);
+  }
+}
 
 /* ====================================================
    UTILS
@@ -1563,15 +1617,81 @@ function fmtBytes(b){ if(b<1024)return b+' B'; if(b<1048576)return(b/1024).toFix
   refreshHome();
   const acc=get('accent','lime');
   if(acc&&acc!=='lime'){ document.documentElement.setAttribute('data-accent',acc); document.querySelectorAll('.ap-sw').forEach(x=>x.classList.toggle('active',x.dataset.a===acc)); }
+  checkPWAStatus();
 })();
 </script>
 
-<!-- PWA Manifest -->
+<!-- PWA Manifest — PNG icon required for Android Chrome install eligibility -->
 <script>
-const mf={name:'Imago by Nik',short_name:'Imago',description:'Image Creator, Enhancer & Exporter',start_url:'./index.html',display:'standalone',background_color:'#0c0b09',theme_color:'#0c0b09',orientation:'any',
-icons:[{src:"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%230c0b09'/%3E%3Ccircle cx='96' cy='96' r='48' stroke='%23d4ff3a' stroke-width='6' fill='none'/%3E%3Ccircle cx='96' cy='96' r='18' fill='%23d4ff3a'/%3E%3Crect x='8' y='8' width='22' height='4' fill='%23d4ff3a'/%3E%3Crect x='8' y='8' width='4' height='22' fill='%23d4ff3a'/%3E%3Crect x='162' y='8' width='22' height='4' fill='%23d4ff3a'/%3E%3Crect x='180' y='8' width='4' height='22' fill='%23d4ff3a'/%3E%3Crect x='8' y='180' width='22' height='4' fill='%23d4ff3a'/%3E%3Crect x='8' y='162' width='4' height='22' fill='%23d4ff3a'/%3E%3Crect x='162' y='180' width='22' height='4' fill='%23d4ff3a'/%3E%3Crect x='180' y='162' width='4' height='22' fill='%23d4ff3a'/%3E%3C/svg%3E",sizes:'192x192',type:'image/svg+xml',purpose:'any maskable'}]};
-const bl=new Blob([JSON.stringify(mf)],{type:'application/manifest+json'});
-const lk=document.createElement('link');lk.rel='manifest';lk.href=URL.createObjectURL(bl);document.head.appendChild(lk);
+(function buildManifest() {
+  // Generate 192x192 PNG icon on canvas
+  const cvs = document.createElement('canvas');
+  cvs.width = cvs.height = 192;
+  const ctx = cvs.getContext('2d');
+  // Background
+  ctx.fillStyle = '#0c0b09'; ctx.fillRect(0, 0, 192, 192);
+  // Viewfinder corners
+  ctx.fillStyle = '#d4ff3a';
+  [[8,8],[170,8],[8,170],[170,170]].forEach(([x,y]) => {
+    const sx = x === 8 ? 1 : -1, sy = y === 8 ? 1 : -1;
+    ctx.fillRect(x, y, 22 * sx, 4 * sy);
+    ctx.fillRect(x, y, 4 * sx, 22 * sy);
+  });
+  // Outer circle
+  ctx.beginPath(); ctx.arc(96, 96, 48, 0, Math.PI * 2);
+  ctx.strokeStyle = '#d4ff3a'; ctx.lineWidth = 5; ctx.stroke();
+  // Inner dot
+  ctx.beginPath(); ctx.arc(96, 96, 18, 0, Math.PI * 2);
+  ctx.fillStyle = '#d4ff3a'; ctx.fill();
+  // Cross hairs
+  ctx.strokeStyle = '#d4ff3a'; ctx.lineWidth = 3;
+  [[96,40,96,56],[96,136,96,152],[40,96,56,96],[136,96,152,96]].forEach(([x1,y1,x2,y2]) => {
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  });
+  const icon192 = cvs.toDataURL('image/png');
+
+  // 512x512
+  const cvs2 = document.createElement('canvas');
+  cvs2.width = cvs2.height = 512;
+  const c2 = cvs2.getContext('2d');
+  c2.fillStyle = '#0c0b09'; c2.fillRect(0, 0, 512, 512);
+  c2.fillStyle = '#d4ff3a';
+  [[16,16],[462,16],[16,462],[462,462]].forEach(([x,y]) => {
+    const sx=x===16?1:-1, sy=y===16?1:-1;
+    c2.fillRect(x,y,56*sx,10*sy); c2.fillRect(x,y,10*sx,56*sy);
+  });
+  c2.beginPath(); c2.arc(256,256,128,0,Math.PI*2);
+  c2.strokeStyle='#d4ff3a'; c2.lineWidth=12; c2.stroke();
+  c2.beginPath(); c2.arc(256,256,48,0,Math.PI*2);
+  c2.fillStyle='#d4ff3a'; c2.fill();
+  c2.strokeStyle='#d4ff3a'; c2.lineWidth=8;
+  [[256,100,256,148],[256,364,256,412],[100,256,148,256],[364,256,412,256]].forEach(([x1,y1,x2,y2])=>{
+    c2.beginPath();c2.moveTo(x1,y1);c2.lineTo(x2,y2);c2.stroke();
+  });
+  const icon512 = cvs2.toDataURL('image/png');
+
+  const mf = {
+    name: 'Imago by Nik',
+    short_name: 'Imago',
+    description: 'Image Creator, Enhancer & Exporter',
+    start_url: './',
+    scope: './',
+    display: 'standalone',
+    background_color: '#0c0b09',
+    theme_color: '#0c0b09',
+    orientation: 'any',
+    categories: ['photo', 'utilities'],
+    icons: [
+      { src: icon192, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: icon192, sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+      { src: icon512, sizes: '512x512', type: 'image/png', purpose: 'any' },
+    ]
+  };
+  const bl = new Blob([JSON.stringify(mf)], { type: 'application/manifest+json' });
+  const lk = document.createElement('link');
+  lk.rel = 'manifest'; lk.href = URL.createObjectURL(bl);
+  document.head.appendChild(lk);
+})();
 </script>
 
 <!-- Service Worker -->
